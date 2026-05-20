@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AURA Developer Hub</title>
+    <style>
+        :root {
+            --bg: #0a0f16;
+            --panel: #121b27;
+            --panel-2: #192535;
+            --text: #e8f0ff;
+            --muted: #9bb0ca;
+            --accent: #43c6ac;
+            --accent-2: #f8b656;
+            --danger: #ff6961;
+            --border: #27384f;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at 15% 10%, rgba(67, 198, 172, 0.15), transparent 40%),
+                radial-gradient(circle at 85% 0%, rgba(248, 182, 86, 0.16), transparent 35%),
+                var(--bg);
+            min-height: 100vh;
+            padding: 28px 16px 40px;
+        }
+
+        .shell {
+            width: 100%;
+            max-width: 980px;
+            margin: 0 auto;
+            display: grid;
+            gap: 20px;
+        }
+
+        .hero {
+            background: linear-gradient(145deg, rgba(18, 27, 39, 0.96), rgba(18, 27, 39, 0.8));
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 24px;
+        }
+
+        h1 {
+            margin: 0 0 10px;
+            letter-spacing: 0.2px;
+        }
+
+        p {
+            margin: 0;
+            color: var(--muted);
+            line-height: 1.5;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background: linear-gradient(160deg, rgba(25, 37, 53, 0.92), rgba(18, 27, 39, 0.9));
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+        }
+
+        .card h2 {
+            margin: 0 0 12px;
+            font-size: 1.1rem;
+        }
+
+        .latest {
+            display: grid;
+            gap: 10px;
+        }
+
+        .latest-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            border-bottom: 1px dashed rgba(155, 176, 202, 0.2);
+            padding-bottom: 8px;
+        }
+
+        .latest-row span:first-child {
+            color: var(--muted);
+        }
+
+        label {
+            display: block;
+            font-size: 0.92rem;
+            margin-bottom: 6px;
+            color: var(--muted);
+        }
+
+        .field {
+            margin-bottom: 14px;
+        }
+
+        input[type="text"],
+        input[type="number"],
+        input[type="password"],
+        textarea,
+        input[type="file"] {
+            width: 100%;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: rgba(10, 15, 22, 0.8);
+            color: var(--text);
+            padding: 11px 12px;
+            font-size: 0.95rem;
+        }
+
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+
+        .inline {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .inline input[type="checkbox"] {
+            transform: scale(1.15);
+            accent-color: var(--accent);
+        }
+
+        .btn {
+            border: none;
+            border-radius: 11px;
+            padding: 12px 16px;
+            color: #08121b;
+            font-weight: 700;
+            background: linear-gradient(120deg, var(--accent), var(--accent-2));
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s ease, opacity 0.2s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-1px);
+        }
+
+        .btn:disabled {
+            opacity: 0.65;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status {
+            margin-top: 14px;
+            border-radius: 10px;
+            border: 1px solid rgba(67, 198, 172, 0.35);
+            background: rgba(67, 198, 172, 0.1);
+            color: #bcffef;
+            padding: 10px 12px;
+            display: none;
+            line-height: 1.45;
+        }
+
+        .status.error {
+            border-color: rgba(255, 105, 97, 0.35);
+            background: rgba(255, 105, 97, 0.12);
+            color: #ffd2cf;
+        }
+
+        .catalog-list {
+            margin: 8px 0 0;
+            padding-left: 18px;
+            color: var(--text);
+        }
+
+        .catalog-list li {
+            margin-bottom: 6px;
+        }
+
+        .hint {
+            font-size: 0.84rem;
+            color: var(--muted);
+            margin-top: 8px;
+        }
+
+        @media (max-width: 640px) {
+            .hero,
+            .card {
+                padding: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="shell">
+        <section class="hero">
+            <h1>AURA Developer Hub</h1>
+            <p>Upload new APK releases, publish "what's new" entries, and trigger in-app update prompts for Android clients.</p>
+        </section>
+
+        <section class="grid">
+            <article class="card">
+                <h2>Latest Published Update</h2>
+                <div id="latest-info" class="latest">
+                    <div class="latest-row"><span>Status</span><span>Loading...</span></div>
+                </div>
+            </article>
+
+            <article class="card">
+                <h2>Publish Update</h2>
+                <form id="publish-form">
+                    <div class="field">
+                        <label for="token">Developer Token</label>
+                        <input id="token" type="password" autocomplete="off" required>
+                    </div>
+                    <div class="field">
+                        <label for="versionCode">Version Code</label>
+                        <input id="versionCode" type="number" min="1" step="1" required>
+                    </div>
+                    <div class="field">
+                        <label for="versionName">Version Name</label>
+                        <input id="versionName" type="text" placeholder="e.g. 1.8.0" required>
+                    </div>
+                    <div class="field">
+                        <label for="catalog">What's New (one item per line)</label>
+                        <textarea id="catalog" placeholder="Improved recommendations&#10;Faster search results&#10;Fixed offline playlist issue"></textarea>
+                    </div>
+                    <div class="field">
+                        <label for="apk">APK File (optional after first publish)</label>
+                        <input id="apk" type="file" accept=".apk">
+                        <p class="hint">Leave empty to reuse the last uploaded APK and only update version/catalog metadata.</p>
+                    </div>
+                    <div class="inline">
+                        <input id="forceUpdate" type="checkbox">
+                        <label for="forceUpdate" style="margin:0;">Force update popup (no dismiss)</label>
+                    </div>
+                    <button id="publish-btn" class="btn" type="submit">Publish Update</button>
+                </form>
+                <div id="status" class="status"></div>
+            </article>
+        </section>
+    </div>
+
+    <script>
+        const tokenInput = document.getElementById("token");
+        const versionCodeInput = document.getElementById("versionCode");
+        const versionNameInput = document.getElementById("versionName");
+        const catalogInput = document.getElementById("catalog");
+        const apkInput = document.getElementById("apk");
+        const forceUpdateInput = document.getElementById("forceUpdate");
+        const latestInfo = document.getElementById("latest-info");
+        const statusBox = document.getElementById("status");
+        const publishButton = document.getElementById("publish-btn");
+
+        tokenInput.value = localStorage.getItem("aura_dev_hub_token") || "";
+
+        function showStatus(message, isError) {
+            statusBox.style.display = "block";
+            statusBox.className = isError ? "status error" : "status";
+            statusBox.textContent = message;
+        }
+
+        function hideStatus() {
+            statusBox.style.display = "none";
+            statusBox.textContent = "";
+            statusBox.className = "status";
+        }
+
+        function escapeHtml(value) {
+            return String(value)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/\"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function renderLatest(update) {
+            const safeCatalog = Array.isArray(update.catalog) ? update.catalog : [];
+            const publishedAt = update.published_at ? new Date(update.published_at).toLocaleString() : "Not published";
+            const downloadLink = update.apk_url ? `<a href="${escapeHtml(update.apk_url)}" target="_blank" rel="noopener">Download APK</a>` : "No APK";
+            const status = update.available ? "Ready" : "Not configured";
+            const forceText = update.force_update ? "Yes" : "No";
+            const catalogHtml = safeCatalog.length
+                ? `<ul class="catalog-list">${safeCatalog.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+                : "<span style=\"color: var(--muted);\">No catalog items yet.</span>";
+
+            latestInfo.innerHTML = `
+                <div class="latest-row"><span>Status</span><span>${status}</span></div>
+                <div class="latest-row"><span>Version</span><span>${escapeHtml(update.latest_version_name || "0.0.0")} (${escapeHtml(String(update.latest_version_code || 0))})</span></div>
+                <div class="latest-row"><span>Force Update</span><span>${forceText}</span></div>
+                <div class="latest-row"><span>Published</span><span>${escapeHtml(publishedAt)}</span></div>
+                <div class="latest-row"><span>APK</span><span>${downloadLink}</span></div>
+                <div style="margin-top:8px;">
+                    <span style="display:block; color: var(--muted); margin-bottom:6px;">Catalog</span>
+                    ${catalogHtml}
+                </div>
+            `;
+        }
+
+        async function loadLatestUpdate() {
+            try {
+                const res = await fetch("/api/app-update/latest", { cache: "no-store" });
+                const data = await res.json();
+                renderLatest(data);
+            } catch (error) {
+                latestInfo.innerHTML = "<div class=\"latest-row\"><span>Status</span><span>Failed to load latest update</span></div>";
+            }
+        }
+
+        document.getElementById("publish-form").addEventListener("submit", async (event) => {
+            event.preventDefault();
+            hideStatus();
+
+            const token = tokenInput.value.trim();
+            if (!token) {
+                showStatus("Developer token is required.", true);
+                return;
+            }
+
+            localStorage.setItem("aura_dev_hub_token", token);
+
+            const formData = new FormData();
+            formData.append("token", token);
+            formData.append("versionCode", versionCodeInput.value.trim());
+            formData.append("versionName", versionNameInput.value.trim());
+            formData.append("catalog", catalogInput.value);
+            formData.append("forceUpdate", forceUpdateInput.checked ? "true" : "false");
+            if (apkInput.files && apkInput.files[0]) {
+                formData.append("apk", apkInput.files[0]);
+            }
+
+            publishButton.disabled = true;
+            publishButton.textContent = "Publishing...";
+
+            try {
+                const response = await fetch("/api/app-update/publish", {
+                    method: "POST",
+                    headers: { "X-Aura-Developer-Token": token },
+                    body: formData
+                });
+                const payload = await response.json();
+                if (!response.ok) {
+                    throw new Error(payload.error || "Failed to publish update.");
+                }
+
+                showStatus(payload.message || "Update published successfully.", false);
+                apkInput.value = "";
+                await loadLatestUpdate();
+            } catch (error) {
+                showStatus(error.message || "Failed to publish update.", true);
+            } finally {
+                publishButton.disabled = false;
+                publishButton.textContent = "Publish Update";
+            }
+        });
+
+        loadLatestUpdate();
+    </script>
+</body>
+</html>
