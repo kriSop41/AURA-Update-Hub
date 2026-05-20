@@ -224,10 +224,12 @@
                     <div class="field">
                         <label for="versionCode">Version Code</label>
                         <input id="versionCode" type="number" min="1" step="1" required>
+                        <p class="hint">If an APK is uploaded, Developer Hub now auto-reads versionCode from APK manifest.</p>
                     </div>
                     <div class="field">
                         <label for="versionName">Version Name</label>
                         <input id="versionName" type="text" placeholder="e.g. 1.8.0" required>
+                        <p class="hint">If an APK is uploaded, Developer Hub now auto-reads versionName from APK manifest.</p>
                     </div>
                     <div class="field">
                         <label for="catalog">What's New (one item per line)</label>
@@ -352,7 +354,10 @@
                     throw new Error(payload.error || "Failed to publish update.");
                 }
 
-                showStatus(payload.message || "Update published successfully.", false);
+                const source = payload.metadata_source === "apk_manifest"
+                    ? " Version info verified from uploaded APK manifest."
+                    : "";
+                showStatus((payload.message || "Update published successfully.") + source, false);
                 apkInput.value = "";
                 await loadLatestUpdate();
             } catch (error) {

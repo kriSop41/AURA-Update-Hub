@@ -32,6 +32,34 @@ ALLOWED_UPDATE_FILE_EXTENSIONS = {".apk"}
 MAX_WHATS_NEW_ITEMS = 20
 
 
+def _extract_apk_version_metadata(apk_path: Path):
+    """
+    Read versionCode/versionName directly from the uploaded APK manifest.
+    Returns {"version_code": int, "version_name": str} or None.
+    """
+    try:
+        from pyaxmlparser import APK as ParsedApk
+    except Exception as exc:
+        app.logger.warning("APK metadata parser unavailable: %s", exc)
+        return None
+
+    try:
+        parsed = ParsedApk(str(apk_path))
+        raw_code = str(parsed.version_code or "").strip()
+        raw_name = str(parsed.version_name or "").strip()
+        if not raw_code:
+            return None
+        version_code = int(raw_code)
+        version_name = raw_name or "0.0.0"
+        return {
+            "version_code": version_code,
+            "version_name": version_name
+        }
+    except Exception as exc:
+        app.logger.warning("Could not extract APK metadata for %s: %s", apk_path.name, exc)
+        return None
+
+
 def _default_update_manifest():
     return {
         "latest_version_code": 0,
@@ -184,7 +212,10 @@ def latest_app_update():
     if apk_url and apk_url.startswith("/"):
         payload["apk_url"] = f"{request.url_root.rstrip('/')}{apk_url}"
 
-    return jsonify(payload)
+    response = jsonify(payload)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.route('/api/app-update/publish', methods=['POST'])
@@ -193,7 +224,7 @@ def publish_app_update():
         return jsonify({'error': 'Unauthorized developer token'}), 401
 
     version_code_raw = request.form.get("versionCode") or request.form.get("latest_version_code")
-    version_name = (
+    version_name_input = (
         request.form.get("versionName")
         or request.form.get("latest_version_name")
         or ""
@@ -207,22 +238,14 @@ def publish_app_update():
     force_update = force_update_raw in {"1", "true", "yes", "on"}
     apk_file = request.files.get("apk")
 
-    if not version_code_raw:
-        return jsonify({'error': 'versionCode is required'}), 400
-    if not version_name:
-        return jsonify({'error': 'versionName is required'}), 400
-
-    try:
-        version_code = int(version_code_raw)
-    except ValueError:
-        return jsonify({'error': 'versionCode must be a valid integer'}), 400
-
     manifest = _load_update_manifest()
     previous_entry = _build_update_payload(manifest)
     if previous_entry.get("available"):
         history = manifest.get("history", [])
         history.insert(0, previous_entry)
         manifest["history"] = history[:20]
+
+    apk_metadata = None
 
     if apk_file and apk_file.filename:
         safe_name = secure_filename(apk_file.filename)
@@ -238,8 +261,33 @@ def publish_app_update():
 
         manifest["apk_file"] = final_name
         manifest["apk_url"] = f"/downloads/{final_name}"
+        apk_metadata = _extract_apk_version_metadata(target_path)
     elif not manifest.get("apk_url"):
         return jsonify({'error': 'Upload an APK for the first published update'}), 400
+
+    metadata_source = "manual"
+    if apk_metadata is not None:
+        version_code = apk_metadata["version_code"]
+        version_name = apk_metadata["version_name"]
+        metadata_source = "apk_manifest"
+    else:
+        if not version_code_raw:
+            return jsonify({'error': 'versionCode is required when APK metadata cannot be read'}), 400
+        if not version_name_input:
+            return jsonify({'error': 'versionName is required when APK metadata cannot be read'}), 400
+        try:
+            version_code = int(version_code_raw)
+        except ValueError:
+            return jsonify({'error': 'versionCode must be a valid integer'}), 400
+        version_name = version_name_input
+
+    if version_code < int(manifest.get("latest_version_code") or 0):
+        return jsonify({
+            'error': (
+                f'Cannot publish versionCode {version_code} because latest published '
+                f'versionCode is {manifest.get("latest_version_code", 0)}.'
+            )
+        }), 400
 
     manifest["latest_version_code"] = version_code
     manifest["latest_version_name"] = version_name
@@ -253,11 +301,15 @@ def publish_app_update():
     if response_payload["apk_url"].startswith("/"):
         response_payload["apk_url"] = f"{request.url_root.rstrip('/')}{response_payload['apk_url']}"
 
-    return jsonify({
+    response = jsonify({
         'status': 'ok',
         'message': f'Update {version_name} ({version_code}) published successfully.',
-        'update': response_payload
+        'update': response_payload,
+        'metadata_source': metadata_source
     })
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 @app.route('/search')
 def search():
@@ -381,6 +433,69 @@ def album():
     except Exception as e:
         print(f"Album Error: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/artist_songs')
+def artist_songs():
+    try:
+        browse_id = (request.args.get('browseId') or '').strip()
+        artist_name = (request.args.get('name') or request.args.get('artist') or '').strip()
+        limit_raw = request.args.get('limit') or '20'
+        try:
+            limit = int(limit_raw)
+        except ValueError:
+            limit = 20
+        limit = max(1, min(limit, 40))
+
+        tracks = []
+        if browse_id:
+            try:
+                artist_data = yt.get_artist(browse_id)
+                if not artist_name:
+                    artist_name = (artist_data.get('name') or '').strip()
+                songs_block = artist_data.get('songs') or {}
+                songs_results = songs_block.get('results', []) if isinstance(songs_block, dict) else []
+                tracks.extend(
+                    formatted_track for song in songs_results
+                    if (formatted_track := _format_track(song)) is not None
+                )
+            except Exception as browse_err:
+                print(f"Artist songs browse lookup failed: {browse_err}")
+
+        if not tracks and artist_name:
+            strict_query = f"\"{artist_name}\""
+            primary_results = yt.search(strict_query, filter='songs', limit=max(limit * 3, 20))
+            fallback_results = yt.search(artist_name, filter='songs', limit=max(limit * 3, 20))
+            tracks.extend(
+                formatted_track for song in (primary_results + fallback_results)
+                if (formatted_track := _format_track(song)) is not None
+            )
+
+        normalized_target = _normalize_text(_primary_artist_name(artist_name))
+        if normalized_target:
+            strict_matches = [track for track in tracks if _track_matches_artist_name(track, normalized_target)]
+            if strict_matches:
+                tracks = strict_matches
+
+        seen = set()
+        deduped = []
+        for track in tracks:
+            key = track.get('id')
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(track)
+            if len(deduped) >= limit:
+                break
+
+        return jsonify({
+            'artist': artist_name,
+            'tracks': deduped
+        })
+    except Exception as e:
+        print(f"Artist songs error: {e}")
+        return jsonify({'error': str(e), 'tracks': []}), 500
+
 
 @app.route('/video_lookup')
 def video_lookup():
@@ -531,6 +646,40 @@ def parse_duration_from_string(duration_str):
     except (ValueError, IndexError):
         return 0
     return seconds
+
+
+def _normalize_text(value):
+    if value is None:
+        return ''
+    cleaned = ''.join(ch if str(ch).isalnum() else ' ' for ch in str(value).lower())
+    return ' '.join(cleaned.split())
+
+
+def _primary_artist_name(name):
+    text = str(name or '')
+    separators = [',', '&', ' feat ', ' feat. ', ' featuring ', ' ft ', ' ft. ', ' x ']
+    lowered = text.lower()
+    cut_index = len(text)
+    for sep in separators:
+        idx = lowered.find(sep)
+        if idx != -1:
+            cut_index = min(cut_index, idx)
+    return text[:cut_index].strip() if cut_index < len(text) else text.strip()
+
+
+def _track_matches_artist_name(track, normalized_artist):
+    if not normalized_artist:
+        return True
+    artist_name = track.get('artist', '')
+    normalized_primary = _normalize_text(_primary_artist_name(artist_name))
+    normalized_full = _normalize_text(artist_name)
+    if normalized_primary == normalized_artist or normalized_full == normalized_artist:
+        return True
+    if len(normalized_artist) >= 3:
+        wrapped = f" {normalized_full} "
+        needle = f" {normalized_artist} "
+        return needle in wrapped
+    return False
 
 def _format_track(track):
     """Helper to format track data consistently."""

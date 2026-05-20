@@ -6,3 +6,4 @@ gunicorn
 flask-socketio
 google-auth
 yt-dlp
+pyaxmlparser
