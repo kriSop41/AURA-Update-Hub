@@ -19,6 +19,11 @@ Example:
 
 - `https://your-domain.com/developer-hub`
 
+### Render commands
+
+- Build command: `pip install -r requirements.txt`
+- Start command: `gunicorn -w 2 -b 0.0.0.0:$PORT server:app`
+
 ## 3) Publish updates
 
 From the hub:
@@ -47,4 +52,3 @@ When user taps update:
 1. APK downloads via `DownloadManager`.
 2. On completion, app opens installer intent.
 3. If unknown-source install permission is required, app sends user to settings and resumes install after returning.
-
