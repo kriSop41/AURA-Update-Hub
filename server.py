@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 import requests
 import os
+import hmac
 from urllib.parse import urlparse, parse_qs
 import random
 import time
@@ -16,20 +17,25 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 import traceback
 import yt_dlp
 from werkzeug.utils import secure_filename
+from werkzeug.middleware.proxy_fix import ProxyFix
 
-app = Flask(__name__, static_url_path='', static_folder='.')
+app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+app.config["MAX_CONTENT_LENGTH"] = 300 * 1024 * 1024
 CORS(app) 
-socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60, ping_interval=25)
+socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*", ping_timeout=60, ping_interval=25)
 yt = YTMusic(auth=None)
 yt.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 _spotify_token_cache = {"access_token": None, "expires_at": 0}
 
 DEV_HUB_TOKEN_ENV_KEYS = ("AURA_DEV_HUB_TOKEN", "AURA_DEVELOPER_TOKEN")
+DATABASE_PATH = Path(app.root_path) / "aura_users.db"
 UPDATE_STORAGE_DIR = Path(app.root_path) / "updates"
 APK_UPLOAD_DIR = UPDATE_STORAGE_DIR / "apk"
 UPDATE_MANIFEST_PATH = UPDATE_STORAGE_DIR / "latest_update.json"
 ALLOWED_UPDATE_FILE_EXTENSIONS = {".apk"}
 MAX_WHATS_NEW_ITEMS = 20
+MAX_STORED_APKS = 5
 
 
 def _extract_apk_version_metadata(apk_path: Path):
@@ -78,8 +84,7 @@ def _resolve_dev_hub_token():
         token = (os.getenv(env_name) or "").strip()
         if token:
             return token
-    # Keep a known fallback for local testing; override with env vars in production.
-    return "aura-dev-change-me"
+    return None
 
 
 def _sanitize_catalog(raw_catalog):
@@ -150,15 +155,33 @@ def _build_update_payload(manifest):
 
 def _is_dev_hub_authorized():
     expected_token = _resolve_dev_hub_token()
+    if not expected_token:
+        return False
     request_json = request.get_json(silent=True) if request.is_json else {}
     provided_token = (
         request.headers.get("X-Aura-Developer-Token")
         or request.form.get("token")
         or (request_json or {}).get("token")
-        or request.args.get("token")
         or ""
+    ).strip()
+    return hmac.compare_digest(provided_token, expected_token)
+
+
+def _cleanup_old_apks(manifest):
+    protected = {str(manifest.get("apk_file") or "")}
+    apk_files = sorted(
+        APK_UPLOAD_DIR.glob("*.apk"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True
     )
-    return provided_token.strip() == expected_token
+    keep = set(protected)
+    keep.update(path.name for path in apk_files[:MAX_STORED_APKS])
+    for apk_path in apk_files:
+        if apk_path.name not in keep:
+            try:
+                apk_path.unlink()
+            except OSError:
+                app.logger.warning("Could not delete old APK %s", apk_path.name)
 
 
 def _init_update_storage():
@@ -169,7 +192,7 @@ def _init_update_storage():
 
 # Database Setup
 def init_db():
-    with sqlite3.connect('aura_users.db') as conn:
+    with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS users
                      (google_id TEXT PRIMARY KEY, email TEXT, data TEXT)''')
@@ -190,17 +213,22 @@ def block_sensitive_files():
 
 @app.route('/')
 def index():
-    return send_from_directory('.', 'developer_hub.html')
+    return send_from_directory(app.root_path, 'developer_hub.html')
 
 
 @app.route('/developer-hub')
 def developer_hub():
-    return send_from_directory('.', 'developer_hub.html')
+    return send_from_directory(app.root_path, 'developer_hub.html')
 
 
 @app.route('/downloads/<path:filename>')
 def download_apk(filename):
-    return send_from_directory(str(APK_UPLOAD_DIR), filename, as_attachment=True)
+    safe_name = secure_filename(Path(filename).name)
+    if safe_name != filename:
+        return "Invalid filename", 400
+    response = send_from_directory(str(APK_UPLOAD_DIR), safe_name, as_attachment=True)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route('/api/app-update/latest')
@@ -246,6 +274,7 @@ def publish_app_update():
         manifest["history"] = history[:20]
 
     apk_metadata = None
+    uploaded_apk_path = None
 
     if apk_file and apk_file.filename:
         safe_name = secure_filename(apk_file.filename)
@@ -258,6 +287,7 @@ def publish_app_update():
         final_name = f"{stem}-{stamp}{extension}"
         target_path = APK_UPLOAD_DIR / final_name
         apk_file.save(target_path)
+        uploaded_apk_path = target_path
 
         manifest["apk_file"] = final_name
         manifest["apk_url"] = f"/downloads/{final_name}"
@@ -272,20 +302,29 @@ def publish_app_update():
         metadata_source = "apk_manifest"
     else:
         if not version_code_raw:
+            if uploaded_apk_path:
+                uploaded_apk_path.unlink(missing_ok=True)
             return jsonify({'error': 'versionCode is required when APK metadata cannot be read'}), 400
         if not version_name_input:
+            if uploaded_apk_path:
+                uploaded_apk_path.unlink(missing_ok=True)
             return jsonify({'error': 'versionName is required when APK metadata cannot be read'}), 400
         try:
             version_code = int(version_code_raw)
         except ValueError:
+            if uploaded_apk_path:
+                uploaded_apk_path.unlink(missing_ok=True)
             return jsonify({'error': 'versionCode must be a valid integer'}), 400
         version_name = version_name_input
 
-    if version_code < int(manifest.get("latest_version_code") or 0):
+    latest_published_version_code = int(manifest.get("latest_version_code") or 0)
+    if version_code <= latest_published_version_code:
+        if uploaded_apk_path:
+            uploaded_apk_path.unlink(missing_ok=True)
         return jsonify({
             'error': (
-                f'Cannot publish versionCode {version_code} because latest published '
-                f'versionCode is {manifest.get("latest_version_code", 0)}.'
+                f'versionCode must be higher than the latest published versionCode '
+                f'({latest_published_version_code}).'
             )
         }), 400
 
@@ -296,6 +335,7 @@ def publish_app_update():
     manifest["published_at"] = datetime.now(timezone.utc).isoformat()
 
     _save_update_manifest(manifest)
+    _cleanup_old_apks(manifest)
 
     response_payload = _build_update_payload(manifest)
     if response_payload["apk_url"].startswith("/"):
@@ -317,7 +357,7 @@ def search():
     try:
         query = request.args.get('q')
         if not query:
-            return jsonify([])
+            return jsonify({'songs': [], 'albums': [], 'singles': []})
 
         # Optional raw mode for legacy call sites (e.g. fallback video search).
         search_filter = request.args.get('type')
@@ -564,8 +604,14 @@ def audio_stream():
             fmt for fmt in formats
             if fmt.get('url') and fmt.get('acodec') != 'none' and fmt.get('vcodec') == 'none'
         ]
+        candidate_formats = audio_formats or [
+            fmt for fmt in formats
+            if fmt.get('url') and fmt.get('acodec') != 'none'
+        ]
+        if not candidate_formats:
+            return jsonify({'error': 'No playable audio stream found'}), 404
         chosen = sorted(
-            audio_formats or [fmt for fmt in formats if fmt.get('url') and fmt.get('acodec') != 'none'],
+            candidate_formats,
             key=lambda fmt: (
                 fmt.get('abr') or 0,
                 fmt.get('tbr') or 0,
@@ -597,7 +643,11 @@ def lyrics():
         # Clean title: remove (Official Video), [Lyrics], etc. for better matching
         clean_title = title.split('(')[0].split('[')[0].strip()
         try:
-            resp = requests.get("https://lrclib.net/api/get", params={'artist_name': artist, 'track_name': clean_title})
+            resp = requests.get(
+                "https://lrclib.net/api/get",
+                params={'artist_name': artist, 'track_name': clean_title},
+                timeout=6
+            )
             data = resp.json()
             if data.get('syncedLyrics'):
                 return jsonify({'lyrics': data['syncedLyrics'], 'synced': True})
@@ -714,8 +764,8 @@ def _format_track(track):
     }
 
 def _get_spotify_token():
-    client_id = os.getenv('9cbca88a09d94c37a177a768d95ff749')
-    client_secret = os.getenv('0f2d6701477c4cf19fa5c4fc0fc162d5')
+    client_id = os.getenv('SPOTIFY_CLIENT_ID')
+    client_secret = os.getenv('SPOTIFY_CLIENT_SECRET')
     if not client_id or not client_secret:
         return None, 'Spotify credentials are not configured on the server.'
 
@@ -918,7 +968,7 @@ def google_login():
         user_id = id_info['sub']
         email = id_info.get('email')
 
-        with sqlite3.connect('aura_users.db') as conn:
+        with sqlite3.connect(DATABASE_PATH) as conn:
             c = conn.cursor()
             c.execute("SELECT data FROM users WHERE google_id = ?", (user_id,))
             row = c.fetchone()
@@ -960,9 +1010,16 @@ def sync_user_data():
         id_info = id_token.verify_oauth2_token(token, google_requests.Request(), client_id)
         user_id = id_info['sub']
 
-        with sqlite3.connect('aura_users.db') as conn:
+        with sqlite3.connect(DATABASE_PATH) as conn:
             c = conn.cursor()
-            c.execute("UPDATE users SET data = ? WHERE google_id = ?", (json.dumps(data), user_id))
+            c.execute(
+                """
+                INSERT INTO users (google_id, email, data)
+                VALUES (?, ?, ?)
+                ON CONFLICT(google_id) DO UPDATE SET data=excluded.data
+                """,
+                (user_id, id_info.get('email'), json.dumps(data))
+            )
             
         return jsonify({'status': 'synced'})
     except ValueError as e:

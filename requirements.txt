@@ -4,6 +4,7 @@ ytmusicapi
 flask-cors
 gunicorn
 flask-socketio
+simple-websocket
 google-auth
 yt-dlp
 pyaxmlparser
