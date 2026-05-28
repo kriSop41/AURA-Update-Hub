@@ -7,6 +7,8 @@ import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from threading import Lock
 from ytmusicapi import YTMusic
 from flask_cors import CORS
 import sqlite3
@@ -36,6 +38,10 @@ UPDATE_MANIFEST_PATH = UPDATE_STORAGE_DIR / "latest_update.json"
 ALLOWED_UPDATE_FILE_EXTENSIONS = {".apk"}
 MAX_WHATS_NEW_ITEMS = 20
 MAX_STORED_APKS = 5
+SEARCH_CACHE_TTL_SECONDS = 120
+SEARCH_EXECUTOR = ThreadPoolExecutor(max_workers=4)
+_search_cache = {}
+_search_cache_lock = Lock()
 
 
 def _extract_apk_version_metadata(apk_path: Path):
@@ -182,6 +188,39 @@ def _cleanup_old_apks(manifest):
                 apk_path.unlink()
             except OSError:
                 app.logger.warning("Could not delete old APK %s", apk_path.name)
+
+
+def _cached_search_payload(cache_key):
+    now = time.time()
+    with _search_cache_lock:
+        cached = _search_cache.get(cache_key)
+        if not cached:
+            return None
+        saved_at, payload = cached
+        if now - saved_at > SEARCH_CACHE_TTL_SECONDS:
+            _search_cache.pop(cache_key, None)
+            return None
+        return payload
+
+
+def _remember_search_payload(cache_key, payload):
+    with _search_cache_lock:
+        _search_cache[cache_key] = (time.time(), payload)
+        if len(_search_cache) > 120:
+            oldest_key = min(_search_cache, key=lambda key: _search_cache[key][0])
+            _search_cache.pop(oldest_key, None)
+
+
+def _yt_search_with_timeout(query, search_filter, limit, timeout_seconds):
+    future = SEARCH_EXECUTOR.submit(lambda: yt.search(query, filter=search_filter, limit=limit))
+    try:
+        return future.result(timeout=timeout_seconds)
+    except TimeoutError:
+        app.logger.warning("YTMusic search timed out: %s [%s]", query, search_filter)
+        return []
+    except Exception as exc:
+        app.logger.warning("YTMusic search failed: %s [%s] %s", query, search_filter, exc)
+        return []
 
 
 def _init_update_storage():
@@ -355,18 +394,40 @@ def publish_app_update():
 def search():
     print(f"Search Request: {request.args.get('q')}") # Debug log
     try:
-        query = request.args.get('q')
+        query = (request.args.get('q') or '').strip()
         if not query:
             return jsonify({'songs': [], 'albums': [], 'singles': []})
 
         # Optional raw mode for legacy call sites (e.g. fallback video search).
         search_filter = request.args.get('type')
         if search_filter:
-            return jsonify(yt.search(query, filter=search_filter))
+            return jsonify(_yt_search_with_timeout(query, search_filter, 10, 4.0))
 
-        songs_raw = yt.search(query, filter='songs', limit=20)
-        albums_raw = yt.search(query, filter='albums', limit=12)
-        artists_raw = yt.search(query, filter='artists', limit=3)
+        cache_key = query.lower()
+        cached_payload = _cached_search_payload(cache_key)
+        if cached_payload is not None:
+            return jsonify(cached_payload)
+
+        songs_future = SEARCH_EXECUTOR.submit(lambda: yt.search(query, filter='songs', limit=18))
+        albums_future = SEARCH_EXECUTOR.submit(lambda: yt.search(query, filter='albums', limit=8))
+
+        try:
+            songs_raw = songs_future.result(timeout=3.0)
+        except TimeoutError:
+            app.logger.warning("Song search timed out for %s", query)
+            songs_raw = []
+        except Exception as exc:
+            app.logger.warning("Song search failed for %s: %s", query, exc)
+            songs_raw = []
+
+        try:
+            albums_raw = albums_future.result(timeout=0.7)
+        except TimeoutError:
+            app.logger.warning("Album search timed out for %s", query)
+            albums_raw = []
+        except Exception as exc:
+            app.logger.warning("Album search failed for %s: %s", query, exc)
+            albums_raw = []
 
         songs = [
             formatted_track for track in songs_raw
@@ -420,35 +481,13 @@ def search():
             else:
                 albums.append(formatted)
 
-        # If query looks like an artist, include their catalog albums/singles as well.
-        if artists_raw:
-            first_artist = artists_raw[0]
-            artist_id = first_artist.get('browseId') or first_artist.get('id')
-            if artist_id:
-                try:
-                    artist_details = yt.get_artist(artist_id)
-                    for section_name in ['albums', 'singles']:
-                        section = artist_details.get(section_name) or {}
-                        for album in section.get('results', []):
-                            formatted = _format_album(album)
-                            if not formatted:
-                                continue
-                            media_id = formatted['browseId']
-                            if media_id in seen_media_ids:
-                                continue
-                            seen_media_ids.add(media_id)
-                            if section_name == 'singles' or formatted.get('isSingle'):
-                                singles.append(formatted)
-                            else:
-                                albums.append(formatted)
-                except Exception as artist_err:
-                    print(f"Artist album enrichment failed: {artist_err}")
-
-        return jsonify({
+        payload = {
             'songs': songs,
             'albums': albums[:30],
             'singles': singles[:30]
-        })
+        }
+        _remember_search_payload(cache_key, payload)
+        return jsonify(payload)
     except Exception as e:
         print(f"Search Error: {e}") # Check Render Logs for this
         return jsonify({'error': str(e)}), 500

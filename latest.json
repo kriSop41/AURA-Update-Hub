@@ -1,0 +1,13 @@
+{
+  "available": false,
+  "latest_version_code": 50,
+  "latest_version_name": "1.8.3",
+  "apk_url": "",
+  "catalog": [
+    "Moved update checks to GitHub Pages",
+    "Moved music API to the new backend URL",
+    "Improved playback fallback when backend is unavailable"
+  ],
+  "force_update": false,
+  "published_at": "2026-05-28T00:00:00Z"
+}

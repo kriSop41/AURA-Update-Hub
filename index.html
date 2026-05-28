@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AURA Update Hub</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #06111f;
+      --panel: rgba(255, 255, 255, 0.08);
+      --line: rgba(255, 255, 255, 0.16);
+      --text: #f8fafc;
+      --muted: #a9b7ca;
+      --accent: #38bdf8;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 20% 10%, rgba(56, 189, 248, 0.32), transparent 30rem),
+        radial-gradient(circle at 90% 20%, rgba(16, 185, 129, 0.24), transparent 28rem),
+        linear-gradient(145deg, #030712, var(--bg) 55%, #020617);
+      display: grid;
+      place-items: center;
+      padding: 28px;
+    }
+
+    main {
+      width: min(880px, 100%);
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 28px;
+      padding: clamp(24px, 5vw, 52px);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+      backdrop-filter: blur(18px);
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(40px, 8vw, 82px);
+      line-height: 0.92;
+      letter-spacing: -0.08em;
+    }
+
+    p {
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.6;
+      max-width: 62ch;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-top: 28px;
+    }
+
+    a, code {
+      color: var(--accent);
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+      background: rgba(2, 6, 23, 0.42);
+    }
+
+    .label {
+      color: var(--text);
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>AURA Update Hub</h1>
+    <p>
+      This static hub is designed for GitHub Pages. The Android app reads
+      <a href="./latest.json">latest.json</a>, while APK files should be uploaded to GitHub Releases.
+    </p>
+
+    <div class="grid">
+      <section class="card">
+        <div class="label">Update Manifest</div>
+        <code>latest.json</code>
+      </section>
+      <section class="card">
+        <div class="label">APK Storage</div>
+        <span>GitHub Releases</span>
+      </section>
+      <section class="card">
+        <div class="label">How To Publish</div>
+        <span>Edit <code>latest.json</code>, commit, and push.</span>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
