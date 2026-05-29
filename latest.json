@@ -1,13 +1,15 @@
 {
-  "available": false,
-  "latest_version_code": 50,
-  "latest_version_name": "1.8.3",
-  "apk_url": "",
+  "available": true,
+  "latest_version_code": 51,
+  "latest_version_name": "1.8.5",
+  "apk_url": "https://github.com/kriSop41/AURA-Update-Hub/releases/download/1.8.5/AURA-Music.apk",
   "catalog": [
-    "Moved update checks to GitHub Pages",
-    "Moved music API to the new backend URL",
-    "Improved playback fallback when backend is unavailable"
+    "Fixed song loading speed",
+    "Optimized search",
+    "Fixed first-launch follow artist loading",
+    "Improved recommendations"
+    "Fixed songs not playing"
   ],
   "force_update": false,
-  "published_at": "2026-05-28T00:00:00Z"
+  "published_at": "2026-05-29T00:00:00Z"
 }
